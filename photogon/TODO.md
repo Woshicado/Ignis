@@ -1,0 +1,4 @@
+- [ ] Include light rotation
+- [ ] Include different configurations for isotropic, anisotropic etc.
+- [ ] Include FilmSize change in config
+- [ ] Currently BRDF always takes ONLY first channel into account
