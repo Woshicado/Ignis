@@ -49,7 +49,7 @@ def phi_samples_from_theta(theta, thetap_smp):
 
 
 
-def print_header(file, sun_theta, sun_phi, num_samples):
+def print_header(file, config, sun_theta, sun_phi):
     file.write(
             f"#Synthetic BRDF data created in ignis\n"
             f"#created at { datetime.now().strftime('%Y-%m-%d %H:%M:%S') }\n"
@@ -177,7 +177,6 @@ def render_sun(ignis, args, config):
         irradiance = config["sun_irradiance"]
 
         num_s = phi_samples_from_theta(theta, thetap_smp)
-        theta = theta_i * theta_stepsize
 
         for sphi_i in range(num_s):
             phi = phi_max * (sphi_i / num_s)
@@ -186,7 +185,7 @@ def render_sun(ignis, args, config):
             # Create Sun scene, as I could not add a sun in any other easy way
             o_json = {}
             o_json["lights"] = [{
-                "type": "sun",
+                "type": "directional",
                 "name": "Sun",
                 "direction": dir.tolist(),
                 "irradiance": [irradiance, irradiance, irradiance]}]
@@ -201,8 +200,8 @@ def render_sun(ignis, args, config):
 
             os.makedirs(os.path.dirname(outdir), exist_ok=True)
             with open(outdir, "w") as file:
-                print_header(file, theta, phi, calc_num_samples_per_sun(config))
-                render_theta(file, ignis, args, config, sun=sunlight)
+                print_header(file, config, theta, phi)
+                render_theta(file, ignis, args, config, sunlight)
 
             sun_idx += 1
 
