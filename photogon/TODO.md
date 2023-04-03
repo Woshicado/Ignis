@@ -1,4 +1,6 @@
-- [ ] Include light rotation
-- [ ] Include different configurations for isotropic, anisotropic etc.
+- [x] Include light rotation
+  - [ ] Sunlight is included via an extra light scene that is merged with the loaded scene. I could not find an easier way (with the current version of the API) like only adding a light, modifying lights in a scene etc...
+    - (SceneParser, SceneProperty, ... all do not have constructors)
+- [ ] Include different configurations for isotropic, anisotropic etc. and number of samples
 - [ ] Include FilmSize change in config
 - [ ] Currently BRDF always takes ONLY first channel into account

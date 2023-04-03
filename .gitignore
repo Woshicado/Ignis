@@ -2,8 +2,6 @@ build/
 CMakeSettings.json
 
 # Photogon work files
-photogon/o
-photogon/out.txt
 photogon/**/*.blend
 
 # Visual Studio stuff
