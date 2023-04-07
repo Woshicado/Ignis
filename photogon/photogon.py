@@ -33,7 +33,7 @@ def theta_from_idx(idx, theta_steps, theta_max):
     if (idx == 0):
         return stepsize * 0.01
     if (theta_steps == idx and (theta_max == np.pi / 2 or theta_max == np.pi)):
-        return np.pi - stepsize * 0.01
+        return theta_max - stepsize * 0.01
     return idx * stepsize
 
 
@@ -60,7 +60,7 @@ def print_header(file, args, config, sun_theta, sun_phi):
             f"#datapoints_in_file { calc_num_samples_per_sun(config) }\n"
             f"#incident_angle\t{rad_to_deg(sun_theta):f}\t{rad_to_deg(sun_phi):f}\n"
             f"#intheta\t{rad_to_deg(sun_theta):f}\n"
-            f"#i_phi\t{rad_to_deg(sun_phi):f}\n"
+            f"#inphi\t{rad_to_deg(sun_phi):f}\n"
             f"#format: theta\tphi\tBRDF\n"
         )
 
