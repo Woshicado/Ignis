@@ -12,6 +12,9 @@ from config import *
 def rad_to_deg(rad):
     return rad * 180.0 / np.pi
 
+def deg_to_rad(deg):
+    return deg * np.pi / 180.0
+
 
 def spherical_to_cartesian(theta, phi):
     x = np.sin(theta) * np.cos(phi)
@@ -29,7 +32,7 @@ def theta_from_idx(idx, theta_steps, theta_max):
     stepsize = theta_max / theta_steps
     if (idx == 0):
         return stepsize * 0.01
-    if (theta_steps == idx and theta_max == np.pi):
+    if (theta_steps == idx and (theta_max == np.pi / 2 or theta_max == np.pi)):
         return np.pi - stepsize * 0.01
     return idx * stepsize
 
@@ -49,18 +52,21 @@ def phi_samples_from_theta(theta, thetap_smp):
 
 
 
-def print_header(file, config, sun_theta, sun_phi):
+def print_header(file, args, config, sun_theta, sun_phi):
     file.write(
             f"#Synthetic BRDF data created in ignis\n"
             f"#created at { datetime.now().strftime('%Y-%m-%d %H:%M:%S') }\n"
-            f"#Number of samples: { calc_num_samples_per_sun(config) }\n"
-            f"#Sun:\t{rad_to_deg(sun_theta):f}\t{rad_to_deg(sun_phi):f}\n"
+            f"#sample_name {Path(args.InputFile).stem}_{sun_theta:.1f}_{sun_phi:.1f}\n"
+            f"#datapoints_in_file { calc_num_samples_per_sun(config) }\n"
+            f"#incident_angle\t{rad_to_deg(sun_theta):f}\t{rad_to_deg(sun_phi):f}\n"
+            f"#intheta\t{rad_to_deg(sun_theta):f}\n"
+            f"#i_phi\t{rad_to_deg(sun_phi):f}\n"
             f"#format: theta\tphi\tBRDF\n"
         )
 
 
 def log(file, args, theta: float, phi: float, brdf: float):
-    out = f"{rad_to_deg(theta):f}\t{rad_to_deg(phi):f}\t{brdf:g}\n"
+    out = f"{rad_to_deg(theta):f}\t{rad_to_deg(phi):f}\t{brdf:e}\n"
     file.write(out)
 
     if args.print:
@@ -81,7 +87,7 @@ def calc_num_samples_per_sun(config):
 
 
 
-def render(file, ignis, args, config, ori, theta, phi, callnum, sun):
+def render(file, ignis, args, config, sun):
     opts = ignis.RuntimeOptions.makeDefault()
     # opts.OverrideFilmSize = [x, y]
 
@@ -100,64 +106,61 @@ def render(file, ignis, args, config, ori, theta, phi, callnum, sun):
 
         if runtime is None:
             raise RuntimeError("Could not load scene")
-
         orientation = runtime.InitialCameraOrientation
-        orientation.Eye = ori[0]
-        orientation.Up  = ori[1]
-        orientation.Dir = ori[2]
-        runtime.setCameraOrientationParameter(orientation)
 
-        while runtime.SampleCount < config["spp"]:
-            runtime.step()
+        for idx, (theta, phi, ori) in enumerate(sample_grid(config)):
+            orientation.Eye = ori[0]
+            orientation.Up  = ori[1]
+            orientation.Dir = ori[2]
+            runtime.setCameraOrientationParameter(orientation)
 
-        img = np.divide(runtime.getFramebuffer(), runtime.IterationCount)\
-                .reshape(runtime.FramebufferHeight, runtime.FramebufferWidth, 3)
+            while runtime.SampleCount < config["spp"]:
+                runtime.step()
 
-        mid_horizontal, mid_vertical = runtime.FramebufferWidth // 2, runtime.FramebufferHeight // 2
-        brdf = img[mid_vertical, mid_horizontal, 0]
+            img = np.divide(runtime.getFramebuffer(), runtime.IterationCount)\
+                    .reshape(runtime.FramebufferHeight, runtime.FramebufferWidth, 3)
 
-        log(file, args, theta, phi, brdf)
+            mid_horizontal, mid_vertical = runtime.FramebufferWidth // 2, runtime.FramebufferHeight // 2
+            brdf = img[mid_vertical, mid_horizontal, 0]
 
-        if args.store_render:
-            img = img.reshape(runtime.FramebufferWidth, runtime.FramebufferHeight, 3)
-            ignis.saveExr(os.path.join(config["render_out"], f"{callnum:04d}.exr"), img)
+            log(file, args, theta, phi, brdf)
 
+            if args.store_render:
+                img = img.reshape(runtime.FramebufferWidth, runtime.FramebufferHeight, 3)
+                ignis.saveExr(os.path.join(config["render_out"], f"{idx:05d}.exr"), img)
 
-def render_phi(file, ignis, args, config, theta: float, callnum, sun) -> float:
-    thetap_smp = config["phi_steps"]
-    cam_dist   = config["cam_dist"]
-    phi_max    = config["phi_max"]
-
-    original_up = np.array([0, 0, 1])
-    num_s = phi_samples_from_theta(theta, thetap_smp)
-
-    for phi_i in range(num_s):
-        phi   = phi_max * (phi_i / num_s)
-        cart  = spherical_to_cartesian(theta, phi)
-
-        eye   = cam_dist * cart
-        dir   = -1 * cart
-
-        right = np.cross(dir, original_up)
-        right = right / np.linalg.norm(right)
-        up    = np.cross(right, dir)
-        up    = up / np.linalg.norm(up)
-        ori   = (eye, up, dir)
-
-        render(file, ignis, args, config, ori, theta, phi, callnum + phi_i, sun)
-
-    return phi_i
+            # Clear Framebuffer and reset samplecount for next rotation position
+            runtime.reset()
 
 
-def render_theta(file, ignis, args, config, sun):
+# Function to iterate the sample grid of the given config.
+# Yields the next theta, phi and camera orientation upon call
+def sample_grid(config):
     theta_steps = config["theta_steps"]
     theta_max   = config["theta_max"]
+    thetap_smp  = config["phi_steps"]
+    cam_dist    = config["cam_dist"]
+    phi_max     = config["phi_max"]
 
-    callnum = 0
+    original_up = np.array([0, 0, 1])
 
     for theta_i in range(0, theta_steps + 1):
         theta = theta_from_idx(theta_i, theta_steps, theta_max)
-        callnum += render_phi(file, ignis, args, config, theta, callnum, sun)
+        num_s = phi_samples_from_theta(theta, thetap_smp)
+        for phi_i in range(num_s):
+            phi   = phi_max * (phi_i / num_s)
+            cart  = spherical_to_cartesian(theta, phi)
+
+            eye   = cam_dist * cart
+            dir   = -1 * cart
+
+            right = np.cross(dir, original_up)
+            right = right / np.linalg.norm(right)
+            up    = np.cross(right, dir)
+            up    = up / np.linalg.norm(up)
+            ori   = (eye, up, dir)
+
+            yield theta, phi, ori
 
 
 def render_sun(ignis, args, config):
@@ -171,7 +174,7 @@ def render_sun(ignis, args, config):
     for theta_i in range(0, theta_steps + 1):
         theta = theta_i * theta_stepsize
 
-        # Sun Phi "function" starts here
+        # Sun Phi calulation
         thetap_smp = config["sun_phi_steps"]
         phi_max    = config["phi_max"]
         irradiance = config["sun_irradiance"]
@@ -200,11 +203,10 @@ def render_sun(ignis, args, config):
 
             os.makedirs(os.path.dirname(outdir), exist_ok=True)
             with open(outdir, "w") as file:
-                print_header(file, config, theta, phi)
-                render_theta(file, ignis, args, config, sunlight)
+                print_header(file, args, config, theta, phi)
+                render(file, ignis, args, config, sunlight)
 
             sun_idx += 1
-
 
 
 def main(ignis, args, config):
