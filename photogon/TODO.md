@@ -4,3 +4,5 @@
 - [ ] Include different configurations for isotropic, anisotropic etc. and number of samples
 - [ ] Include FilmSize change in config
 - [ ] Currently BRDF always takes ONLY first channel into account
+- [x] phi: -180 to 180, currently: 0 - 360. However, should work. Still try changing
+  - [ ] Tried, did not change anything. tekari still cant visualize the sampled grid. Fails at triangulating

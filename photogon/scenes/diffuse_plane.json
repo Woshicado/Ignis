@@ -1,0 +1,61 @@
+{
+  "technique": {
+    "type": "path",
+    "max_depth": 3,
+    "clamp": 0.0
+  },
+  "shapes": [
+    {
+      "type": "ply",
+      "name": "Plane",
+      "filename": "meshes/Plane.ply"
+    }
+  ],
+  "bsdfs": [
+    {
+      "type": "diffuse",
+      "name": "__bsdf_black",
+      "reflectance": 0
+    },
+    {
+      "type": "diffuse",
+      "name": "__bsdf_error",
+      "reflectance": [
+        1,
+        0.75,
+        0.8
+      ]
+    },
+    {
+      "type": "diffuse",
+      "name": "Material.001",
+      "reflectance": "color(0.800000011920929, 0.800000011920929, 0.800000011920929, 1.0)",
+      "roughness": "(0.5)^2"
+    }
+  ],
+  "entities": [
+    {
+      "name": "Plane-Plane",
+      "shape": "Plane",
+      "bsdf": "Material.001",
+      "transform": [
+        5.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        5.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        5.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    }
+  ]
+}

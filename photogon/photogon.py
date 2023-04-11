@@ -9,14 +9,17 @@ from pathlib import Path
 from utils import load_api
 from config import *
 
+
 def rad_to_deg(rad):
     return rad * 180.0 / np.pi
 
 def deg_to_rad(deg):
     return deg * np.pi / 180.0
 
-
 def spherical_to_cartesian(theta, phi):
+    """
+    Transforms given spherical coordinates to cartesian ones on the unit sphere
+    """
     x = np.sin(theta) * np.cos(phi)
     y = np.sin(theta) * np.sin(phi)
     z = np.cos(theta)
@@ -26,9 +29,13 @@ def spherical_to_cartesian(theta, phi):
 
 
 
-# Theta cannot be 0 or pi since this would be colinear to our up vector.
-# This function handles these cases separately
 def theta_from_idx(idx, theta_steps, theta_max):
+    """
+    Theta cannot be 0 or pi since this would be colinear to our up vector.
+    This function handles these cases separately.
+    Currently also does not allow theta to be equal to pi / 2 since this is some
+    kind of an edge case as well.
+    """
     stepsize = theta_max / theta_steps
     if (idx == 0):
         return stepsize * 0.01
@@ -36,9 +43,8 @@ def theta_from_idx(idx, theta_steps, theta_max):
         return theta_max - stepsize * 0.01
     return idx * stepsize
 
-
-# Returns the number of samples for phi for a specific value of theta
 def phi_samples_from_theta(theta, thetap_smp):
+    """Returns the number of samples for phi for a specific value of theta"""
     pi_2 = np.pi / 2.0
     abs_theta = np.abs(theta - pi_2)    # Center theta s.t. x-y-plane is maximum (pi / 2)
 
@@ -52,26 +58,33 @@ def phi_samples_from_theta(theta, thetap_smp):
 
 
 
-def print_header(file, args, config, sun_theta, sun_phi):
+def print_header(file, args, sun_theta, sun_phi, num_samples, additional_headers=""):
     file.write(
             f"#Synthetic BRDF data created in ignis\n"
             f"#created at { datetime.now().strftime('%Y-%m-%d %H:%M:%S') }\n"
             f"#sample_name {Path(args.InputFile).stem}_{sun_theta:.1f}_{sun_phi:.1f}\n"
-            f"#datapoints_in_file { calc_num_samples_per_sun(config) }\n"
+            f"#datapoints_in_file { num_samples }\n"
             f"#incident_angle\t{rad_to_deg(sun_theta):f}\t{rad_to_deg(sun_phi):f}\n"
             f"#intheta\t{rad_to_deg(sun_theta):f}\n"
             f"#inphi\t{rad_to_deg(sun_phi):f}\n"
-            f"#format: theta\tphi\tBRDF\n"
+            f"#format: theta\tphi\tBRDF\n" + additional_headers
         )
 
-
 def log(file, args, theta: float, phi: float, brdf: float):
+    """Log one line into file in the format: "theta\tphi\tbrdf"""
     out = f"{rad_to_deg(theta):f}\t{rad_to_deg(phi):f}\t{brdf:e}\n"
     file.write(out)
 
     if args.print:
         print(out, end="")
 
+
+
+def num_samples_per_sun(config):
+    if config["grid_gen"] == sample_grid:
+        return calc_num_samples_per_sun(config)
+    else:
+        return simulate_num_samples_per_sun(config)
 
 def calc_num_samples_per_sun(config):
     theta_steps = config["theta_steps"]
@@ -85,9 +98,80 @@ def calc_num_samples_per_sun(config):
 
     return num_samples
 
+def simulate_num_samples_per_sun(config):
+    grid_gen = config["grid_gen"]
+    acc = 0
+    for _theta, _phi, _ori in grid_gen(config):
+        acc += 1
+
+    return acc
+
+
+
+def sample_grid(config):
+    theta_steps = config["theta_steps"]
+    theta_max   = config["theta_max"]
+    thetap_smp  = config["phi_steps"]
+    cam_dist    = config["cam_dist"]
+    phi_max     = config["phi_max"]
+
+    original_up = np.array([0, 0, 1])
+
+    for theta_i in range(0, theta_steps + 1):
+        theta = theta_from_idx(theta_i, theta_steps, theta_max)
+        num_s = phi_samples_from_theta(theta, thetap_smp)
+        for phi_i in range(num_s):
+            phi   = phi_max / num_s * phi_i # - np.pi
+            cart  = spherical_to_cartesian(theta, phi)
+
+            eye   = cam_dist * cart
+            dir   = -1 * cart
+
+            right = np.cross(dir, original_up)
+            right = right / np.linalg.norm(right)
+            up    = np.cross(right, dir)
+            up    = up / np.linalg.norm(up)
+            ori   = (eye, up, dir)
+
+            yield theta, phi, ori
+
+def replicated_grid(config, path="out/sent_data.txt"):
+    """
+    Replicates the angles theta and phi from the given phi to sample in the exact
+    same pattern.
+    Each call yields the next theta, phi, orientation tuple.
+    """
+    cam_dist    = config["cam_dist"]
+    original_up = np.array([0, 0, 1])
+
+    with open(path, "r") as pdata:
+        for line in pdata:
+            floats = [float(i) for i in line.split()]
+            theta = deg_to_rad(floats[0])
+            phi   = deg_to_rad(floats[1])
+
+            cart  = spherical_to_cartesian(theta, phi)
+
+            eye   = cam_dist * cart
+            dir   = -1 * cart
+
+            right = np.cross(dir, original_up)
+            right = right / np.linalg.norm(right)
+            up    = np.cross(right, dir)
+            up    = up / np.linalg.norm(up)
+            ori   = (eye, up, dir)
+
+            yield theta, phi, ori
+
 
 
 def render(file, ignis, args, config, sun):
+    """
+    Render loop to generate the brdf samples defined by config and dumps them
+    into file. ignis needs to contain the loaded ignis api.
+    """
+    grid_generator = config["grid_gen"]
+
     opts = ignis.RuntimeOptions.makeDefault()
     # opts.OverrideFilmSize = [x, y]
 
@@ -108,7 +192,7 @@ def render(file, ignis, args, config, sun):
             raise RuntimeError("Could not load scene")
         orientation = runtime.InitialCameraOrientation
 
-        for idx, (theta, phi, ori) in enumerate(sample_grid(config)):
+        for idx, (theta, phi, ori) in enumerate(grid_generator(config)):
             orientation.Eye = ori[0]
             orientation.Up  = ori[1]
             orientation.Dir = ori[2]
@@ -132,38 +216,11 @@ def render(file, ignis, args, config, sun):
             # Clear Framebuffer and reset samplecount for next rotation position
             runtime.reset()
 
-
-# Function to iterate the sample grid of the given config.
-# Yields the next theta, phi and camera orientation upon call
-def sample_grid(config):
-    theta_steps = config["theta_steps"]
-    theta_max   = config["theta_max"]
-    thetap_smp  = config["phi_steps"]
-    cam_dist    = config["cam_dist"]
-    phi_max     = config["phi_max"]
-
-    original_up = np.array([0, 0, 1])
-
-    for theta_i in range(0, theta_steps + 1):
-        theta = theta_from_idx(theta_i, theta_steps, theta_max)
-        num_s = phi_samples_from_theta(theta, thetap_smp)
-        for phi_i in range(num_s):
-            phi   = phi_max * (phi_i / num_s)
-            cart  = spherical_to_cartesian(theta, phi)
-
-            eye   = cam_dist * cart
-            dir   = -1 * cart
-
-            right = np.cross(dir, original_up)
-            right = right / np.linalg.norm(right)
-            up    = np.cross(right, dir)
-            up    = up / np.linalg.norm(up)
-            ori   = (eye, up, dir)
-
-            yield theta, phi, ori
-
-
 def render_sun(ignis, args, config):
+    """
+    Loops over all sun positions and creates a brdf sample file for every one.
+    Calls the `render` function to fill the brdf sample files correctly.
+    """
     theta_steps = config["sun_theta_steps"]
     theta_max   = config["sun_theta_max"]
     theta_stepsize = theta_max / theta_steps
@@ -203,14 +260,34 @@ def render_sun(ignis, args, config):
 
             os.makedirs(os.path.dirname(outdir), exist_ok=True)
             with open(outdir, "w") as file:
-                print_header(file, args, config, theta, phi)
+                print_header(file, args, theta, phi, num_samples_per_sun(config))
                 render(file, ignis, args, config, sunlight)
 
             sun_idx += 1
 
 
+
+def logtest(args, config):
+    """
+    For test purposes only!
+
+    Generates a brdf samples file with the angles theta and phi from the defined
+    grid generator in the config argument. The brdf value is a constant magic
+    number.
+    """
+    grid_generator = config["grid_gen"]
+    outdir = os.path.join(args.out, "0.txt")
+    with open(outdir, "w") as file:
+        print_header(file, args, 0.0, 0.0, num_samples_per_sun(config))
+        for theta, phi, _ in grid_generator(config):
+            brdf = 2.456176e-01
+            log(file, args, theta, phi, brdf)
+
+
+
 def main(ignis, args, config):
     render_sun(ignis, args, config)
+
 
 
 if __name__ == "__main__":
@@ -246,6 +323,8 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     config = standard
+    # config["grid_gen"] = sample_grid
+    config["grid_gen"] = replicated_grid
 
     if args.cam_dist:
         config["cam_dist"] = args.cam_dist
@@ -265,10 +344,11 @@ if __name__ == "__main__":
         config["sun_phi_max"] = args.sun_p_max
 
     if args.num_samples:
-        print(f"# Samples for given config: { calc_num_samples_per_sun(config) }")
+        print(f"# Samples for given config: { num_samples_per_sun(config) }")
         exit(0)
 
     ignis = load_api()
     ignis.setQuiet(args.quiet)
 
     main(ignis, args, config)
+    # logtest(args, config)
