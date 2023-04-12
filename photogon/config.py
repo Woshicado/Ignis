@@ -11,14 +11,14 @@ standard = {
                   (0.3, 80),     # format: (percentage of `pi / 2`, num_samples)
                   (0.6, 160),     # Higher percentage -> closer to x-y-plane
                   (0.8, 320)],
-    "spp": 100,
+    "spp": 32,
     "sun_theta_max": np.pi / 2, # inclusive
     "sun_theta_steps": 10,
     "sun_phi_max": 2.0 * np.pi, # exclusive
     "sun_phi_steps": [(0.05, 1),
                       (0.1, 1),
-                      (0.3, 1),
-                      (0.6, 1),
-                      (0.8, 1)],
+                      (0.3, 3),
+                      (0.6, 3),
+                      (0.8, 3)],
     "sun_irradiance": 1.0
 }

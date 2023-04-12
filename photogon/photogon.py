@@ -59,11 +59,12 @@ def phi_samples_from_theta(theta, thetap_smp):
 
 
 
-def print_header(file, args, sun_theta, sun_phi, num_samples, additional_headers=""):
+def print_header(file, config, sun_theta, sun_phi, num_samples, additional_headers=""):
     file.write(
             f"#Synthetic BRDF data created in ignis\n"
             f"#created at { datetime.now().strftime('%Y-%m-%d %H:%M:%S') }\n"
-            f"#sample_name {Path(args.InputFile).stem}_{sun_theta:.1f}_{sun_phi:.1f}\n"
+            f"#grid_gen {config['grid_gen']} {config['rep_path']}"
+            f"#sample_name {Path(config['in']).stem}_{sun_theta:.1f}_{sun_phi:.1f}\n"
             f"#datapoints_in_file { num_samples }\n"
             f"#incident_angle\t{rad_to_deg(sun_theta):f}\t{rad_to_deg(sun_phi):f}\n"
             f"#intheta\t{rad_to_deg(sun_theta):f}\n"
@@ -71,12 +72,12 @@ def print_header(file, args, sun_theta, sun_phi, num_samples, additional_headers
             f"#format: theta\tphi\tBRDF\n" + additional_headers
         )
 
-def log(file, args, theta: float, phi: float, brdf: float):
+def log(file, theta: float, phi: float, brdf: float, print_std=False):
     """Log one line into file in the format: "theta\tphi\tbrdf"""
     out = f"{rad_to_deg(theta):f}\t{rad_to_deg(phi):f}\t{brdf:e}\n"
     file.write(out)
 
-    if args.print:
+    if print_std:
         print(out, end="")
 
 
@@ -136,7 +137,7 @@ def sample_grid(config):
 
             yield theta, phi, ori
 
-def replicated_grid(config, path="out/sent_data.txt"):
+def replicated_grid(config):
     """
     Replicates the angles theta and phi from the given phi to sample in the exact
     same pattern.
@@ -145,8 +146,7 @@ def replicated_grid(config, path="out/sent_data.txt"):
     cam_dist    = config["cam_dist"]
     original_up = np.array([0, 0, 1])
 
-    if "rep_path" in config:
-        path = config["rep_path"]
+    path = config["rep_path"]
 
     with open(path, "r") as pdata:
         for line in pdata:
@@ -169,7 +169,7 @@ def replicated_grid(config, path="out/sent_data.txt"):
 
 
 
-def render(file, ignis, args, config, sun):
+def render(file, ignis, config, sun):
     """
     Render loop to generate the brdf samples defined by config and dumps them
     into file. ignis needs to contain the loaded ignis api.
@@ -179,7 +179,7 @@ def render(file, ignis, args, config, sun):
     opts = ignis.RuntimeOptions.makeDefault()
     # opts.OverrideFilmSize = [x, y]
 
-    entity_scene = ignis.Scene().loadFromFile(str(args.InputFile.resolve()),
+    entity_scene = ignis.Scene().loadFromFile(str(config["in"].resolve()),
                                               ignis.SceneParser.F_LoadFilm     |
                                               ignis.SceneParser.F_LoadTechnique|
                                               ignis.SceneParser.F_LoadBSDFs    |
@@ -197,10 +197,14 @@ def render(file, ignis, args, config, sun):
         orientation = runtime.InitialCameraOrientation
 
         for idx, (theta, phi, ori) in enumerate(grid_generator(config)):
-            if args.cont and not (isclose(rad_to_deg(theta), config["cont_pos"][0], abs_tol=1e-6)
-                              and isclose(rad_to_deg(phi), config["cont_pos"][1], abs_tol=1e-6)):
-                continue
-            args.cont = False
+            if "cont_pos" in config:
+                if not (isclose(rad_to_deg(theta), config["cont_pos"][0], abs_tol=1e-6)
+                    and isclose(rad_to_deg(phi), config["cont_pos"][1], abs_tol=1e-6)):
+                    continue
+                else:
+                    del config["cont_pos"]
+                    # Continue to not get a duplicate entry
+                    continue
 
             orientation.Eye = ori[0]
             orientation.Up  = ori[1]
@@ -216,16 +220,16 @@ def render(file, ignis, args, config, sun):
             mid_horizontal, mid_vertical = runtime.FramebufferWidth // 2, runtime.FramebufferHeight // 2
             brdf = img[mid_vertical, mid_horizontal, 0]
 
-            log(file, args, theta, phi, brdf)
+            log(file, theta, phi, brdf, config["print"])
 
-            if args.store_render:
+            if config["store_render"]:
                 img = img.reshape(runtime.FramebufferWidth, runtime.FramebufferHeight, 3)
                 ignis.saveExr(os.path.join(config["render_out"], f"{idx:05d}.exr"), img)
 
             # Clear Framebuffer and reset samplecount for next rotation position
             runtime.reset()
 
-def render_sun(ignis, args, config):
+def render_sun(ignis, config):
     """
     Loops over all sun positions and creates a brdf sample file for every one.
     Calls the `render` function to fill the brdf sample files correctly.
@@ -251,7 +255,7 @@ def render_sun(ignis, args, config):
             phi = phi_max * (sphi_i / num_s)
             dir = -1 * spherical_to_cartesian(theta, phi)
 
-            if args.cont and sun_idx < config["cont_sun"]:
+            if "cont_sun" in config and sun_idx < config["cont_sun"]:
                 sun_idx += 1
                 continue
 
@@ -267,22 +271,23 @@ def render_sun(ignis, args, config):
             sunlight = ignis.Scene().loadFromString(json_dump)
 
             # Manage output paths & start render
-            outdir = os.path.join(args.out, str(sun_idx) + ".txt")
-            if args.store_render:
-                config["render_out"] = os.path.join(args.out, "renders", str(sun_idx))
+            outdir = os.path.join(config["out"], str(sun_idx) + ".txt")
+            if config["store_render"]:
+                config["render_out"] = os.path.join(config["out"], "renders", str(sun_idx))
 
             os.makedirs(os.path.dirname(outdir), exist_ok=True)
-            with open(outdir, "a" if args.cont else "w") as file:
-                if not args.cont:
-                    print_header(file, args, theta, phi, num_samples_per_sun(config))
-                render(file, ignis, args, config, sunlight)
+            with open(outdir, "a" if "cont_sun" in config else "w") as file:
+                if "cont_sun" not in config:
+                    print_header(file, config, theta, phi, num_samples_per_sun(config))
+                else:
+                    del config["cont_sun"]
+                render(file, ignis, config, sunlight)
 
-            args.cont = False
             sun_idx += 1
 
 
 
-def logtest(args, config):
+def logtest(config):
     """
     For test purposes only!
 
@@ -291,19 +296,19 @@ def logtest(args, config):
     number.
     """
     grid_generator = config["grid_gen"]
-    outdir = os.path.join(args.out, "0.txt")
+    outdir = os.path.join(config["out"], "0.txt")
     with open(outdir, "w") as file:
-        print_header(file, args, 0.0, 0.0, num_samples_per_sun(config))
+        print_header(file, config, 0.0, 0.0, num_samples_per_sun(config))
         for theta, phi, _ in grid_generator(config):
             brdf = 2.456176e-01
-            log(file, args, theta, phi, brdf)
+            log(file, theta, phi, brdf, config["print"])
 
-def cont(config, args):
+def cont(config, sun_idx):
     """
-    Sets flag in the given config to continue where left of
+    Sets flag in the given config to continue where left of. Takes the filename
+    as sun index that should be continued.
     """
-    sun_idx = int(args.cont)
-    outdir = os.path.join(args.out, str(sun_idx) + ".txt")
+    outdir = os.path.join(config["out"], str(sun_idx) + ".txt")
 
     with open(outdir, "r") as file:
         for line in file:
@@ -312,6 +317,7 @@ def cont(config, args):
                 # Currently only support continuing a replicated grid
                 assert(len(ldata) == 3)
                 assert(ldata[1] == "replicated_grid")
+                config["grid_gen"] = replicated_grid
                 config["rep_path"] = ldata[2]
                 break
             if ldata[0][0] != '#':
@@ -339,8 +345,8 @@ def cont(config, args):
         config["cont_sun"] = sun_idx
 
 
-def main(ignis, args, config):
-    render_sun(ignis, args, config)
+def main(ignis, config):
+    render_sun(ignis, config)
 
 
 
@@ -376,12 +382,22 @@ if __name__ == "__main__":
                         help="Print the number of samples to standard out and exit")
     parser.add_argument('--continue', type=int, dest="cont",
                         help="Continue where left of. Takes the latest sun index (which is the file stem) as argument")
+    parser.add_argument('--replicate', type=Path,
+                        help="Path to a sampled file to replicate its sample pattern. Replicating makes almost all of the config irrelevant")
 
     args = parser.parse_args()
     config = standard
-    # config["grid_gen"] = sample_grid
-    config["grid_gen"] = replicated_grid
+    config["grid_gen"] = sample_grid
 
+    config["out"] = args.out
+    config["in"]  = args.InputFile
+
+    config["print"] = True if args.print else False
+    config["store_render"] = True if args.store_render else False
+
+    if args.replicate:
+        config["grid_gen"] = replicated_grid
+        config["rep_path"] = args.replicate
     if args.cam_dist:
         config["cam_dist"] = args.cam_dist
     if args.t_steps:
@@ -404,10 +420,10 @@ if __name__ == "__main__":
         exit(0)
 
     if args.cont:
-        cont(config, args)
+        cont(config, args.cont)
 
     ignis = load_api()
     ignis.setQuiet(args.quiet)
 
-    main(ignis, args, config)
-    # logtest(args, config)
+    main(ignis, config)
+    # logtest(config)
