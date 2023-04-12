@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from utils import load_api
 from config import *
+from math import isclose
 
 
 def rad_to_deg(rad):
@@ -144,6 +145,9 @@ def replicated_grid(config, path="out/sent_data.txt"):
     cam_dist    = config["cam_dist"]
     original_up = np.array([0, 0, 1])
 
+    if "rep_path" in config:
+        path = config["rep_path"]
+
     with open(path, "r") as pdata:
         for line in pdata:
             floats = [float(i) for i in line.split()]
@@ -193,6 +197,11 @@ def render(file, ignis, args, config, sun):
         orientation = runtime.InitialCameraOrientation
 
         for idx, (theta, phi, ori) in enumerate(grid_generator(config)):
+            if args.cont and not (isclose(rad_to_deg(theta), config["cont_pos"][0], abs_tol=1e-6)
+                              and isclose(rad_to_deg(phi), config["cont_pos"][1], abs_tol=1e-6)):
+                continue
+            args.cont = False
+
             orientation.Eye = ori[0]
             orientation.Up  = ori[1]
             orientation.Dir = ori[2]
@@ -242,6 +251,10 @@ def render_sun(ignis, args, config):
             phi = phi_max * (sphi_i / num_s)
             dir = -1 * spherical_to_cartesian(theta, phi)
 
+            if args.cont and sun_idx < config["cont_sun"]:
+                sun_idx += 1
+                continue
+
             # Create Sun scene, as I could not add a sun in any other easy way
             o_json = {}
             o_json["lights"] = [{
@@ -259,10 +272,12 @@ def render_sun(ignis, args, config):
                 config["render_out"] = os.path.join(args.out, "renders", str(sun_idx))
 
             os.makedirs(os.path.dirname(outdir), exist_ok=True)
-            with open(outdir, "w") as file:
-                print_header(file, args, theta, phi, num_samples_per_sun(config))
+            with open(outdir, "a" if args.cont else "w") as file:
+                if not args.cont:
+                    print_header(file, args, theta, phi, num_samples_per_sun(config))
                 render(file, ignis, args, config, sunlight)
 
+            args.cont = False
             sun_idx += 1
 
 
@@ -283,6 +298,45 @@ def logtest(args, config):
             brdf = 2.456176e-01
             log(file, args, theta, phi, brdf)
 
+def cont(config, args):
+    """
+    Sets flag in the given config to continue where left of
+    """
+    sun_idx = int(args.cont)
+    outdir = os.path.join(args.out, str(sun_idx) + ".txt")
+
+    with open(outdir, "r") as file:
+        for line in file:
+            ldata = line.split()
+            if ldata[0] == "#grid_gen":
+                # Currently only support continuing a replicated grid
+                assert(len(ldata) == 3)
+                assert(ldata[1] == "replicated_grid")
+                config["rep_path"] = ldata[2]
+                break
+            if ldata[0][0] != '#':
+                assert(False and "No grid generator given in file header.")
+
+
+    # Use binary and seek to extract last line
+    # Could be done with readlines() but would be very slow for large files
+    with open(outdir, "rb") as file:
+        try:
+            file.seek(-2, os.SEEK_END)
+            while file.read(1) != b'\n':
+                file.seek(-2, os.SEEK_CUR)
+
+        except OSError:
+            file.seek(0)
+        last_line = file.readline().decode()
+
+
+        floats = [float(i) for i in last_line.split()]
+        # Contains [theta, phi, brdf] after execution, thus fail if len != 3
+        assert(len(floats) == 3)
+
+        config["cont_pos"] = (floats[0], floats[1])
+        config["cont_sun"] = sun_idx
 
 
 def main(ignis, args, config):
@@ -320,6 +374,8 @@ if __name__ == "__main__":
                         help="Store rendered images in subdirectory 'renders'")
     parser.add_argument('--num-samples', action="store_true", dest="num_samples",
                         help="Print the number of samples to standard out and exit")
+    parser.add_argument('--continue', type=int, dest="cont",
+                        help="Continue where left of. Takes the latest sun index (which is the file stem) as argument")
 
     args = parser.parse_args()
     config = standard
@@ -346,6 +402,9 @@ if __name__ == "__main__":
     if args.num_samples:
         print(f"# Samples for given config: { num_samples_per_sun(config) }")
         exit(0)
+
+    if args.cont:
+        cont(config, args)
 
     ignis = load_api()
     ignis.setQuiet(args.quiet)

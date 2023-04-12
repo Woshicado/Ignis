@@ -6,3 +6,7 @@
 - [ ] Currently BRDF always takes ONLY first channel into account
 - [x] phi: -180 to 180, currently: 0 - 360. However, should work. Still try changing
   - [ ] Tried, did not change anything. tekari still cant visualize the sampled grid. Fails at triangulating
+- [ ] Include option to continue sampling from where content of file ends
+  - [x] Implemented for replicating grid
+    - [ ] Not exactly pretty, might want to rewrite
+  - [ ] Implement for sample_grid
